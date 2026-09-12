@@ -1,0 +1,238 @@
+import { useState } from 'react';
+import { Calculator as CalcIcon, Settings2, Wallet, AlertTriangle } from 'lucide-react';
+import { estimateExecution, slippageFromTop } from '../utils/slippage';
+
+export default function ProfitCalculator({ fees, activeOpportunity, withdrawalFees = {}, books = {} }) {
+  const [tradeSize, setTradeSize] = useState(1000);
+  const [gasFee, setGasFee] = useState(0); // 0 = usar fee real del exchange
+  
+  if (!activeOpportunity) {
+    return (
+      <div className="bg-dark-900 border border-slate-800 rounded-2xl p-6 animate-in fade-in flex flex-col items-center justify-center min-h-[400px]">
+        <CalcIcon className="w-12 h-12 text-slate-700 mb-4" />
+        <h3 className="text-slate-300 font-bold text-lg mb-2">Calculadora de Profit & Slippage</h3>
+        <p className="text-slate-500 text-sm max-w-md text-center">
+          Para simular una operación, ve a la pestaña de Arbitraje Espacial y haz clic en "Simular" en cualquier oportunidad.
+        </p>
+      </div>
+    );
+  }
+
+  const { asset, pair, buyExchange, sellExchange, buyPrice, sellPrice, grossSpreadPct, buySymbol, sellSymbol } = activeOpportunity;
+  
+  // Ejecución real: cruzar el order book real (VWAP por profundidad) con taker en ambas patas
+  const buyTakerFee = fees[buyExchange]?.[pair]?.taker || 0.001;
+  const sellTakerFee = fees[sellExchange]?.[pair]?.taker || 0.001;
+
+  const buyBook = books[buyExchange]?.[buySymbol];
+  const sellBook = books[sellExchange]?.[sellSymbol];
+  const exec = estimateExecution({ asks: buyBook?.asks, bids: sellBook?.bids }, tradeSize);
+  const buyVwap = exec?.vwap ?? buyPrice;
+  const sellVwap = exec?.sell?.vwap ?? sellPrice;
+  const buySlippage = slippageFromTop(buyVwap, buyBook?.asks?.[0]?.[0]);
+  const sellSlippage = slippageFromTop(exec?.sell?.vwap, sellBook?.bids?.[0]?.[0]);
+  const insufficientDepth = !buyBook || !sellBook || !exec || !exec.executable;
+  
+  // Calculate execution details
+  const amountCrypto = exec?.filledQty > 0 ? exec.filledQty : tradeSize / buyPrice;
+  const buyFeeUsd = tradeSize * buyTakerFee;
+  const cryptoAfterBuyFee = amountCrypto * (1 - buyTakerFee);
+  
+  const sellVolumeUsd = cryptoAfterBuyFee * sellVwap;
+  const sellFeeUsd = sellVolumeUsd * sellTakerFee;
+
+  // Gas on-chain real segun exchange de compra (0 en el input = auto)
+  const actualGas = gasFee > 0 ? gasFee : (withdrawalFees[buyExchange]?.usdt ?? 5.0);
+
+  const netRevenue = sellVolumeUsd - sellFeeUsd - actualGas;
+  const netProfit = netRevenue - tradeSize;
+  const netProfitPct = (netProfit / tradeSize) * 100;
+
+  return (
+    <div className="bg-dark-900 border border-slate-800 rounded-2xl p-6 animate-in fade-in space-y-6">
+      <div className="flex items-center gap-3 border-b border-slate-800 pb-4">
+        <div className="w-10 h-10 rounded-lg bg-emerald-500/10 text-emerald-400 flex items-center justify-center">
+          <CalcIcon className="w-5 h-5" />
+        </div>
+        <div>
+          <h2 className="text-lg font-bold text-white">Calculadora de Ejecución Real</h2>
+          <p className="text-xs text-slate-400">Simulación rigurosa con comisiones Taker reales (publicadas y verificadas) de cada exchange.</p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Left Column: Input & Config */}
+        <div className="col-span-1 space-y-4">
+          <div className="bg-dark-950 border border-slate-800 rounded-xl p-4">
+            <h3 className="text-sm font-bold text-slate-300 flex items-center gap-2 mb-4">
+              <Settings2 className="w-4 h-4 text-emerald-400" />
+              Parámetros de Simulación
+            </h3>
+            
+            <div className="space-y-4 text-sm">
+              <div>
+                <label className="block text-slate-400 mb-1.5 text-xs">Oportunidad Seleccionada</label>
+                <div className="bg-dark-900 border border-slate-700 rounded px-3 py-2 text-white font-mono text-xs flex justify-between">
+                  <span>{buyExchange.toUpperCase()} ➔ {sellExchange.toUpperCase()}</span>
+                  <span className="text-emerald-400">+{grossSpreadPct.toFixed(2)}%</span>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-slate-400 mb-1.5 text-xs">Capital a invertir (USDT)</label>
+                <div className="relative">
+                  <span className="absolute left-3 top-2.5 text-slate-500">$</span>
+                  <input 
+                    type="number" 
+                    value={tradeSize}
+                    onChange={e => setTradeSize(Number(e.target.value))}
+                    className="w-full bg-dark-900 border border-slate-700 rounded-lg pl-7 pr-3 py-2 text-white font-mono focus:border-emerald-500 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-slate-400 mb-1.5 text-xs">Costo de Red Estimado (Retiro on-chain USDT)</label>
+                <div className="relative">
+                  <span className="absolute left-3 top-2.5 text-slate-500">$</span>
+                  <input 
+                    type="number" 
+                    step="0.1"
+                    value={gasFee}
+                    placeholder={withdrawalFees[buyExchange] ? `Auto: $${withdrawalFees[buyExchange].usdt.toFixed(2)} (${withdrawalFees[buyExchange].network})` : 'Auto: $5.00'}
+                    onChange={e => setGasFee(Number(e.target.value))}
+                    className="w-full bg-dark-900 border border-slate-700 rounded-lg pl-7 pr-3 py-2 text-white font-mono focus:border-emerald-500 focus:outline-none"
+                  />
+                </div>
+                <p className="text-[10px] text-slate-500 mt-1">
+                  Fee real de retiro de {buyExchange}: ${withdrawalFees[buyExchange]?.usdt?.toFixed(2) ?? '5.00'} ({withdrawalFees[buyExchange]?.network ?? 'ERC20'}). Dejá 0 para usar el valor real.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Right Column: Breakdown */}
+        <div className="col-span-1 lg:col-span-2 space-y-4">
+          {insufficientDepth && (
+            <div className="flex items-start gap-3 bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 animate-pulse-subtle">
+              <AlertTriangle className="w-5 h-5 text-amber-400 mt-0.5 shrink-0" />
+              <div>
+                <p className="text-sm font-bold text-amber-300">Profundidad insuficiente para ${tradeSize.toLocaleString()}</p>
+                <p className="text-xs text-amber-200/70 mt-1">
+                  El order book real de {buyExchange}/{sellExchange} no cubre el monto. {!buyBook ? `Libro de ${buyExchange} no disponible.` : !sellBook ? `Libro de ${sellExchange} no disponible.` : 'La operación quedaría parcialmente sin llenar.'} Ajustá
+                  el capital o buscá una oportunidad con más liquidez.
+                </p>
+              </div>
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            
+            {/* Compra */}
+            <div className="bg-dark-950 border border-slate-800 rounded-xl p-4">
+              <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">1. Compra ({buyExchange})</h4>
+              <div className="space-y-2 text-sm font-mono">
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Top Ask:</span>
+                  <span className="text-white">${buyPrice.toLocaleString()}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Precio Ejec. (VWAP):</span>
+                  <span className="text-white">${buyVwap.toFixed(6)}</span>
+                </div>
+                {buySlippage !== null && (
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Slippage Compra:</span>
+                    <span className={buySlippage > 0.01 ? 'text-amber-400' : 'text-emerald-400'}>+{buySlippage.toFixed(3)}%</span>
+                  </div>
+                )}
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Volumen {asset} (llenado):</span>
+                  <span className="text-white">{amountCrypto.toFixed(6)} {asset}</span>
+                </div>
+                <div className="flex justify-between pt-2 border-t border-slate-800">
+                                  <span className="text-slate-500">Fee Taker ({(buyTakerFee * 100).toFixed(2)}%):</span>
+                                  <span className="text-rose-400">-${buyFeeUsd.toFixed(2)}</span>
+                                </div>
+              </div>
+            </div>
+
+            {/* Venta */}
+            <div className="bg-dark-950 border border-slate-800 rounded-xl p-4">
+              <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">2. Venta ({sellExchange})</h4>
+              <div className="space-y-2 text-sm font-mono">
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Top Bid:</span>
+                  <span className="text-white">${sellPrice.toLocaleString()}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Precio Ejec. (VWAP):</span>
+                  <span className="text-white">${sellVwap.toFixed(6)}</span>
+                </div>
+                {sellSlippage !== null && (
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Slippage Venta:</span>
+                    <span className={sellSlippage > 0.01 ? 'text-amber-400' : 'text-emerald-400'}>-{Math.abs(sellSlippage).toFixed(3)}%</span>
+                  </div>
+                )}
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Valor Bruto:</span>
+                  <span className="text-white">${sellVolumeUsd.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between pt-2 border-t border-slate-800">
+                  <span className="text-slate-500">Fee Taker ({(sellTakerFee * 100).toFixed(2)}%):</span>
+                  <span className="text-rose-400">-${sellFeeUsd.toFixed(2)}</span>
+                </div>
+              </div>
+            </div>
+
+          </div>
+
+          {/* Resultado Neto */}
+          <div className="bg-dark-950 border border-slate-800 rounded-xl p-5 mt-4">
+             <div className="flex items-center justify-between mb-4">
+               <h4 className="text-sm font-bold text-slate-300 flex items-center gap-2">
+                 <Wallet className="w-4 h-4 text-emerald-400" />
+                 Resultado Final Neto
+               </h4>
+             </div>
+             
+             <div className="flex flex-col md:flex-row gap-6 items-center">
+               <div className="flex-1 space-y-2 text-sm font-mono w-full">
+<div className="flex justify-between">
+                    <span className="text-slate-500">Total Venta (VWAP, post-compra):</span>
+                    <span className="text-emerald-400">+${(sellVolumeUsd - tradeSize).toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between text-rose-400/80">
+                    <span>Fee Taker Venta:</span>
+                    <span>-${sellFeeUsd.toFixed(2)}</span>
+                  </div>
+                 <div className="flex justify-between text-rose-400/80 pb-2 border-b border-slate-800">
+                   <span>Costo Retiro (Gas):</span>
+                   <span>-${actualGas.toFixed(2)}</span>
+                 </div>
+                 <div className="flex justify-between pt-2 text-base font-bold">
+                   <span className="text-slate-300">PnL Neto ({netProfitPct.toFixed(2)}%):</span>
+                   <span className={netProfit > 0 ? 'text-emerald-400' : 'text-rose-500'}>
+                     {netProfit > 0 ? '+' : ''}${netProfit.toFixed(2)}
+                   </span>
+                 </div>
+               </div>
+               
+               <div className="w-full md:w-1/3 flex flex-col items-center justify-center p-4 bg-dark-900 rounded-xl border border-slate-800">
+                 <span className="text-xs text-slate-400 uppercase tracking-wider mb-1">Decisión de Algoritmo</span>
+                 {netProfit > 0 ? (
+                   <span className="text-xl font-black text-emerald-400 animate-pulse-subtle">APROBADO</span>
+                 ) : (
+                   <span className="text-xl font-black text-rose-500">DENEGADO</span>
+                 )}
+               </div>
+             </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  );
+}

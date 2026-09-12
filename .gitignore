@@ -1,0 +1,19 @@
+# Dependencies
+node_modules/
+
+# Build
+frontend/dist/
+dist/
+
+# Runtime data / logs
+*.log
+opps.json
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# OS
+.DS_Store
+Thumbs.db
