@@ -8,6 +8,7 @@ dist/
 # Runtime data / logs
 *.log
 opps.json
+backend/.data/
 
 # Env / secrets
 .env

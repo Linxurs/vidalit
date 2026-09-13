@@ -1,6 +1,6 @@
 import { Triangle, ArrowRight, Activity, Percent } from 'lucide-react';
 
-export default function TriangularArbitrage({ triangularOpps = [], fees = {} }) {
+export default function TriangularArbitrage({ triangularOpps = [] }) {
   // We'll show the top 10 triangular opportunities
   const opps = triangularOpps.slice(0, 10);
 
@@ -29,12 +29,8 @@ export default function TriangularArbitrage({ triangularOpps = [], fees = {} }) 
           {opps.map((opp, idx) => {
             const { step1, step2, step3 } = opp.steps;
             
-            // Calculate fees for this exchange
-            const exFees = fees[opp.exchange] || {};
-            const feeTaker = Object.values(exFees)[0]?.taker || 0.001;
-            const totalFeeEstimate = (feeTaker * 3 * 100); // rough estimate: 3 taker trades
-            
-            const netSpread = opp.grossSpreadPct - totalFeeEstimate;
+            const netSpread = (typeof opp.netSpreadPct === 'number') ? opp.netSpreadPct : opp.grossSpreadPct;
+            const feeDeduction = netSpread - opp.grossSpreadPct;
             
             return (
               <div key={idx} className="bg-dark-950 border border-slate-800 rounded-xl p-5 hover:border-indigo-500/50 transition-colors">
@@ -56,7 +52,8 @@ export default function TriangularArbitrage({ triangularOpps = [], fees = {} }) 
                     </div>
                     <div className="text-xs text-slate-500 flex items-center gap-1 justify-end">
                       <Percent className="w-3 h-3" />
-                      Bruto: {opp.grossSpreadPct.toFixed(4)}% | Fees (3x): -{totalFeeEstimate.toFixed(2)}%
+                      Bruto: {opp.grossSpreadPct.toFixed(4)}% | Fee por pata: {(feeDeduction).toFixed(4)}%
+                      {opp.bookBased ? ' · libro real' : ''}
                     </div>
                   </div>
                 </div>

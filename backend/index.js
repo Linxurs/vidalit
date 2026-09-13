@@ -3,6 +3,7 @@ const cors = require('cors');
 const ccxt = require('ccxt');
 const dotenv = require('dotenv');
 const paperbot = require('./paperbot');
+const trader = require('./trader');
 
 dotenv.config();
 
@@ -83,6 +84,18 @@ let marketFees = {};
 let latestBooks = {}; // exId -> symbol -> { bids:[[p,q]...], asks:[[p,q]...], timestamp }
 let usdtUsd = 1; // USD per 1 USDT (Fiat pairs -> USDT normalization)
 
+// Backoff por exchange: ante errores de red / rate-limit no volvemos a martillar
+// la API caida; esperamos un cooldown exponencial (60s -> 120s -> ... tope 10min).
+const exError = new Map();
+const exCooldown = new Map();
+function isOnCooldown(exId) { return Date.now() < (exCooldown.get(exId) || 0); }
+function registerError(exId) {
+  const n = (exError.get(exId) || 0) + 1;
+  exError.set(exId, n);
+  exCooldown.set(exId, Date.now() + Math.min(60000 * Math.pow(2, n - 1), 600000));
+}
+function registerSuccess(exId) { exError.set(exId, 0); exCooldown.set(exId, 0); }
+
 // Normalize a price/quantity to USDT terms if the symbol is Fiat-quoted
 function toUsdt(price, symbol) {
   return (symbol.endsWith('/USD') && usdtUsd) ? price / usdtUsd : price;
@@ -129,6 +142,7 @@ async function fetchOrderBooks() {
   await Promise.all(Object.entries(candidates).map(async ([exchangeId, symSet]) => {
     const exchange = exchanges[exchangeId];
     if (!exchange.has['fetchOrderBook']) return;
+    if (isOnCooldown(exchangeId)) return;
     for (const sym of symSet) {
       // Skip if we already have a fresh book
       if (latestBooks[exchangeId]?.[sym]?.timestamp && (Date.now() - latestBooks[exchangeId][sym].timestamp) < FRESH_MS) continue;
@@ -148,9 +162,11 @@ async function fetchOrderBooks() {
         };
       } catch (e) {
         // Keep the stale book if any, otherwise mark as missing
+        registerError(exchangeId);
         if (!latestBooks[exchangeId]?.[sym]) latestBooks[exchangeId] ??= {};
       }
     }
+    registerSuccess(exchangeId);
   }));
 }
 
@@ -183,6 +199,7 @@ async function fetchPrices() {
   
   await Promise.all(Object.entries(exchanges).map(async ([exchangeId, exchange]) => {
     try {
+      if (isOnCooldown(exchangeId)) return;
       let fetchSymbols = symbols;
       if (exchangeId === 'coinbase' || exchangeId === 'kraken') {
          fetchSymbols = [...ASSETS.map(asset => `${asset}/USD`), ...CROSS_ASSETS.map(asset => `${asset}/BTC`)];
@@ -225,7 +242,9 @@ async function fetchPrices() {
             }
          }
       }
+      registerSuccess(exchangeId);
     } catch (error) {
+      registerError(exchangeId);
       console.error(`Error fetching from ${exchangeId}:`, error.message);
     }
   }));
@@ -335,38 +354,62 @@ function buildSnapshot() {
        const btcUsdt = prices[btcUsdtSym];
        if (!btcUsdt) return;
        
-       CROSS_ASSETS.forEach(cross => {
-           const crossBtcSym = `${cross}/BTC`;
-           const crossUsdtSym = prices[`${cross}/USDT`] ? `${cross}/USDT` : `${cross}/USD`;
-           
-           const crossBtc = prices[crossBtcSym];
-           const crossUsdt = prices[crossUsdtSym];
-           
-           if (btcUsdt?.ask && crossBtc?.ask && crossUsdt?.bid) {
-               // Step 1: Buy BTC with USDT
-               const step1AmountBtc = 1000 / btcUsdt.ask;
-               // Step 2: Buy CROSS with BTC
-               const step2AmountCross = step1AmountBtc / crossBtc.ask;
-               // Step 3: Sell CROSS for USDT
-               const finalUsdt = step2AmountCross * crossUsdt.bid;
-               
-               const grossSpreadPct = ((finalUsdt - 1000) / 1000) * 100;
-               
-               if (grossSpreadPct > -100) { // Keep all valid computations for the UI
-                  triangularOpps.push({
-                      id: `${ex}-${cross}-triangular-${Date.now()}`,
-                      exchange: ex,
-                      route: `USDT ➔ BTC ➔ ${cross} ➔ USDT`,
-                      grossSpreadPct,
-                      steps: {
-                         step1: { pair: btcUsdtSym, action: 'Buy BTC', price: btcUsdt.ask },
-                         step2: { pair: crossBtcSym, action: `Buy ${cross}`, price: crossBtc.ask },
-                         step3: { pair: crossUsdtSym, action: `Sell ${cross}`, price: crossUsdt.bid }
-                      }
-                  });
-               }
-           }
-       });
+CROSS_ASSETS.forEach(cross => {
+            const crossBtcSym = `${cross}/BTC`;
+            const crossUsdtSym = prices[`${cross}/USDT`] ? `${cross}/USDT` : `${cross}/USD`;
+
+            const crossBtc = prices[crossBtcSym];
+            const crossUsdt = prices[crossUsdtSym];
+
+            const btcUsdtPricesValid = btcUsdt?.ask > 0 && Number.isFinite(btcUsdt.ask);
+            const crossValid = crossBtc?.ask > 0 && crossUsdt?.bid > 0 &&
+                               Number.isFinite(crossBtc.ask) && Number.isFinite(crossUsdt.bid);
+
+            if (btcUsdtPricesValid && crossValid) {
+                const taker = (REAL_FEES[ex] || { taker: 0.001 }).taker;
+
+                // Cuando hay libros frescos para las 3 patas usamos el TOP del libro
+                // real (consistente con el modulo espacial); si no, ticker (top-of-book).
+                const bookOk = (s) => {
+                  const b = latestBooks[ex]?.[s];
+                  return b && Date.now() - b.timestamp <= 30000 &&
+                         (b.asks?.length || 0) > 0 && (b.bids?.length || 0) > 0;
+                };
+                const useBook = bookOk(btcUsdtSym) && bookOk(crossBtcSym) && bookOk(crossUsdtSym);
+
+                const btcBuyPrice = useBook ? latestBooks[ex][btcUsdtSym].asks[0][0] : btcUsdt.ask;
+                const crossBuyPrice = useBook ? latestBooks[ex][crossBtcSym].asks[0][0] : crossBtc.ask;
+                const crossSellPrice = useBook ? latestBooks[ex][crossUsdtSym].bids[0][0] : crossUsdt.bid;
+
+                // Gross: sin fees (para comparar la seña de mercado)
+                const step1AmountBtcRaw = 1000 / btcBuyPrice;
+                const step2AmountCrossRaw = step1AmountBtcRaw / crossBuyPrice;
+                const finalUsdtRaw = step2AmountCrossRaw * crossSellPrice;
+                const grossSpreadPct = ((finalUsdtRaw - 1000) / 1000) * 100;
+
+                // Neto: taker en cada una de las 3 patas (mismo criterio que el espacial)
+                const step1AmountBtc = step1AmountBtcRaw * (1 - taker);
+                const step2AmountCross = (step1AmountBtc / crossBuyPrice) * (1 - taker);
+                const finalUsdt = step2AmountCross * crossSellPrice * (1 - taker);
+                const netSpreadPct = ((finalUsdt - 1000) / 1000) * 100;
+
+                if (Number.isFinite(grossSpreadPct) && Number.isFinite(netSpreadPct)) {
+                   triangularOpps.push({
+                       id: `${ex}-${cross}-triangular-${Date.now()}`,
+                       exchange: ex,
+                       route: `USDT ➔ BTC ➔ ${cross} ➔ USDT`,
+                       grossSpreadPct,
+                       netSpreadPct,
+                       bookBased: useBook,
+                       steps: {
+                          step1: { pair: btcUsdtSym, action: 'Buy BTC', price: btcBuyPrice },
+                          step2: { pair: crossBtcSym, action: `Buy ${cross}`, price: crossBuyPrice },
+                          step3: { pair: crossUsdtSym, action: `Sell ${cross}`, price: crossSellPrice }
+                       }
+                   });
+                }
+            }
+        });
     });
     
     opps.sort((a, b) => b.grossSpreadPct - a.grossSpreadPct);
@@ -409,7 +452,17 @@ function buildSnapshot() {
       }
     }
 
-    return { opportunities: opps, triangular: triangularOpps, prices: latestPrices, fees: marketFees, withdrawalFees: WITHDRAWAL_FEES, transferFees, books };
+    return {
+      opportunities: opps,
+      triangular: triangularOpps,
+      prices: latestPrices,
+      fees: marketFees,
+      withdrawalFees: WITHDRAWAL_FEES,
+      transferFees,
+      books,
+      usdtUsd,
+      exchanges: { total: EXCHANGES.length, active: Object.keys(marketFees).length }
+    };
 }
 
 // API Endpoint to get current opportunities
@@ -440,6 +493,25 @@ app.post('/api/paper-bot/reset', (req, res) => {
 app.post('/api/paper-bot/config', (req, res) => {
     paperbot.config(req.body);
     res.json(paperbot.snapshot());
+});
+
+// ---- Capa de ejecución real (dry-run) ----
+app.get('/api/trader/status', (req, res) => {
+    res.json(trader.status());
+});
+
+app.post('/api/trader/check', async (req, res) => {
+  try {
+    const tradeSize = Number(req.body?.tradeSize) || 1500;
+    const snap = buildSnapshot();
+    const opp = snap.opportunities[0];
+    if (!opp) return res.json({ ok: false, reason: 'sin oportunidades en este momento' });
+    const data = { books: snap.books, fees: snap.fees };
+    const result = await trader.plan(opp, tradeSize, data);
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
 });
 
 app.listen(PORT, () => {

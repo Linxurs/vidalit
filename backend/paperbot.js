@@ -4,6 +4,61 @@
 
 const REAL_FEES_DEFAULT = { maker: 0.001, taker: 0.001 };
 
+// Persistencia en disco: el estado sobrevive a reinicios del proceso Node.
+const fs = require('fs');
+const path = require('path');
+const DATA_DIR = path.join(__dirname, '.data');
+const DATA_FILE = path.join(DATA_DIR, 'paperbot.json');
+
+function serializeState() {
+  return {
+    active: state.active,
+    balance: state.balance,
+    tradeSize: state.tradeSize,
+    gasCost: state.gasCost,
+    delayMin: state.delayMin,
+    survivalPct: state.survivalPct,
+    history: state.history,
+    stats: state.stats,
+    startedAt: state.startedAt,
+    lastTradeAt: state.lastTradeAt,
+    signed: [...state.signed],
+    survival: state.survival
+  };
+}
+
+function save() {
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    const tmp = DATA_FILE + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(serializeState(), null, 2));
+    fs.renameSync(tmp, DATA_FILE);
+  } catch (e) {
+    console.error('paperbot save:', e.message);
+  }
+}
+
+function load() {
+  try {
+    if (!fs.existsSync(DATA_FILE)) return;
+    const d = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+    state.active = !!d.active;
+    if (typeof d.balance === 'number') state.balance = d.balance;
+    if (typeof d.tradeSize === 'number') state.tradeSize = d.tradeSize;
+    if (typeof d.gasCost === 'number') state.gasCost = d.gasCost;
+    if (typeof d.delayMin === 'number') state.delayMin = d.delayMin;
+    if (typeof d.survivalPct === 'number') state.survivalPct = d.survivalPct;
+    if (Array.isArray(d.history)) state.history = d.history;
+    if (d.stats && typeof d.stats.checked === 'number') state.stats = d.stats;
+    if (typeof d.startedAt === 'number') state.startedAt = d.startedAt;
+    if (typeof d.lastTradeAt === 'number') state.lastTradeAt = d.lastTradeAt;
+    if (Array.isArray(d.signed)) state.signed = new Set(d.signed);
+    if (d.survival) state.survival = d.survival;
+  } catch (e) {
+    console.error('paperbot load:', e.message);
+  }
+}
+
 function estimateBuy(asks, sizeUsd) {
   let filledNotional = 0;
   let filledQty = 0;
@@ -131,6 +186,7 @@ function tick(snapshot) {
     state.stats.checked += 1;
     if (survived) state.stats.survived += 1;
     state.survival = null;
+    save();
   }
 
   // Fase 2 — el bot exige un COLCHON de supervivencia: la ganancia neta debe
@@ -166,6 +222,7 @@ function tick(snapshot) {
   }, ...state.history].slice(0, 50);
 
   state.survival = { pair: best.pair, buyEx: best.buyEx, sellEx: best.sellEx, detectedAt: Date.now() };
+  save();
 }
 
 function start() {
@@ -173,10 +230,12 @@ function start() {
     state.active = true;
     state.startedAt = state.startedAt || Date.now();
   }
+  save();
 }
 
 function stop() {
   state.active = false;
+  save();
 }
 
 function reset() {
@@ -187,6 +246,7 @@ function reset() {
   state.balance = 10000;
   state.startedAt = null;
   state.lastTradeAt = null;
+  save();
 }
 
 function config(params) {
@@ -195,7 +255,8 @@ function config(params) {
     if (typeof params.gasCost === 'number') state.gasCost = Math.max(0, params.gasCost);
     if (typeof params.delayMin === 'number') state.delayMin = Math.max(0.5, params.delayMin);
     if (typeof params.survivalPct === 'number') state.survivalPct = Math.max(0, params.survivalPct);
-    if (params.sellMode === 'maker' || params.sellMode === 'taker') state.sellMode = params.sellMode;
+if (params.sellMode === 'maker' || params.sellMode === 'taker') state.sellMode = params.sellMode;
+    save();
   }
 }
 
@@ -215,5 +276,7 @@ function snapshot() {
     lastTick: state.lastTick
   };
 }
+
+load();
 
 module.exports = { tick, start, stop, reset, config, snapshot };

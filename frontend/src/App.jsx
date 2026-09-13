@@ -17,7 +17,9 @@ function App() {
   const [activeOpportunity, setActiveOpportunity] = useState(null);
   const [assetFilter, setAssetFilter] = useState('ALL');
   const [withdrawalFees, setWithdrawalFees] = useState({});
-  const [transferFees, setTransferFees] = useState({});
+const [transferFees, setTransferFees] = useState({});
+  const [exchangeInfo, setExchangeInfo] = useState({ total: 9, active: 0 });
+  const [usdtUsd, setUsdtUsd] = useState(1);
   const [bot, setBot] = useState({ active: false, balance: 10000, tradeSize: 1500, gasCost: 0, delayMin: 3, survivalPct: 0.3, sellMode: 'maker', history: [], stats: { checked: 0, survived: 0 } });
 
   const API = 'http://localhost:3001';
@@ -61,6 +63,8 @@ function App() {
       if (data.withdrawalFees) setWithdrawalFees(data.withdrawalFees);
       if (data.transferFees) setTransferFees(data.transferFees);
       if (data.books) setBooks(data.books);
+      if (data.exchanges) setExchangeInfo(data.exchanges);
+      if (typeof data.usdtUsd === 'number') setUsdtUsd(data.usdtUsd);
     } catch (err) {
       console.error('Error fetching opportunities:', err);
     }
@@ -89,7 +93,7 @@ function App() {
 
   return (
     <div className="bg-dark-950 text-slate-100 min-h-screen font-sans flex flex-col antialiased selection:bg-emerald-500/20 selection:text-emerald-400">
-      <Header demoBalance={bot.balance} />
+      <Header demoBalance={bot.balance} exchanges={exchangeInfo} usdtUsd={usdtUsd} />
 
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 lg:p-6 space-y-6">
         <KpiCards 
@@ -144,7 +148,7 @@ function App() {
             setActiveOpportunity={setActiveOpportunity}
           />
         )}
-        {activeTab === 'triangular' && <TriangularArbitrage triangularOpps={triangularOpps} fees={fees} />}
+{activeTab === 'triangular' && <TriangularArbitrage triangularOpps={triangularOpps} fees={fees} />}
         {activeTab === 'calculator' && <ProfitCalculator fees={fees} activeOpportunity={activeOpportunity} withdrawalFees={withdrawalFees} transferFees={transferFees} sellMode={sellMode} books={books} />}
         {activeTab === 'history' && (
           <PaperBot 

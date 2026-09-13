@@ -11,7 +11,7 @@ export default function SpatialArbitrage({ opportunities, minSpread, assetFilter
       <div className="flex flex-wrap items-center justify-between gap-3 text-xs">
         <div className="flex items-center gap-2 text-slate-400">
           <Info className="w-4 h-4 text-emerald-400" />
-          <span>Compara libros de órdenes entre <b>Binance, Coinbase, Kraken, Bybit y OKX</b> en tiempo real.</span>
+          <span>Compara libros de órdenes entre los 9 exchanges (Binance, Coinbase, Kraken, Bybit, OKX, MEXC, Gate, KuCoin y Bitget) en tiempo real.</span>
         </div>
         <div className="flex items-center gap-2">
           <span className="text-slate-500">Filtrar Cripto:</span>

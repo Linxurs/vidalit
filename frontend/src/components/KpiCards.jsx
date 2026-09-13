@@ -53,8 +53,8 @@ export default function KpiCards({ opportunities, demoBalance, botActive, setBot
           </span>
         </div>
         <div className="mt-2 flex items-baseline gap-2">
-          <span className="text-2xl font-black font-mono text-emerald-400">
-            +${(demoBalance - 10000).toFixed(2)}
+          <span className={`text-2xl font-black font-mono ${(demoBalance - 10000) >= 0 ? 'text-emerald-400' : 'text-rose-500'}`}>
+            {(demoBalance - 10000) >= 0 ? '+' : ''}{(demoBalance - 10000).toFixed(2)}
           </span>
         </div>
         <p className="text-xs text-slate-500 mt-1">Capital inicial: $10,000</p>

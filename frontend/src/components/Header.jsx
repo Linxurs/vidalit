@@ -1,6 +1,6 @@
 import { SplitSquareHorizontal, Fuel, Wallet, Volume2 } from 'lucide-react';
 
-export default function Header({ demoBalance }) {
+export default function Header({ demoBalance, exchanges, usdtUsd }) {
   return (
     <header className="border-b border-slate-800/80 bg-dark-900/90 backdrop-blur sticky top-0 z-40 px-4 lg:px-8 py-3.5 flex flex-wrap items-center justify-between gap-4">
       <div className="flex items-center gap-3">
@@ -21,8 +21,8 @@ export default function Header({ demoBalance }) {
       <div className="flex items-center gap-2 sm:gap-6 text-xs text-slate-300">
         <div className="hidden md:flex items-center gap-2 bg-dark-850 px-3 py-1.5 rounded-lg border border-slate-800">
           <Fuel className="w-4 h-4 text-amber-400" />
-          <span>Gas Red:</span>
-          <span className="font-mono text-emerald-400 font-bold">18 Gwei</span>
+          <span>Ref USDT/USD</span>
+          <span className="font-mono text-emerald-400 font-bold">{(usdtUsd || 1).toFixed(4)}</span>
         </div>
 
         <div className="flex items-center gap-2 bg-dark-850 px-3 py-1.5 rounded-lg border border-slate-800">
@@ -31,7 +31,7 @@ export default function Header({ demoBalance }) {
             <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
           </span>
           <span className="hidden sm:inline">Exchanges Activos:</span>
-          <span className="font-bold text-emerald-400">5/5</span>
+          <span className="font-bold text-emerald-400">{exchanges?.active ?? 0}/{exchanges?.total ?? 9}</span>
         </div>
 
         <div className="flex items-center gap-2 bg-emerald-950/40 border border-emerald-500/30 px-3.5 py-1.5 rounded-lg">
