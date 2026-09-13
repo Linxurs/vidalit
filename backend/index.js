@@ -495,9 +495,19 @@ app.post('/api/paper-bot/config', (req, res) => {
     res.json(paperbot.snapshot());
 });
 
-// ---- Capa de ejecución real (dry-run) ----
+// ---- Capa de ejecución real segura (Fases 0-2) ----
 app.get('/api/trader/status', (req, res) => {
     res.json(trader.status());
+});
+
+// Verifica las keys configuradas (solo lectura de balance) y las cachea.
+app.post('/api/trader/probe', async (req, res) => {
+    try {
+        const ids = EXCHANGES.filter(id => trader.authFor(id));
+        const results = {};
+        await Promise.all(ids.map(async id => { results[id] = await trader.authenticated(id); }));
+        res.json({ ok: true, results });
+    } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
 app.post('/api/trader/check', async (req, res) => {
@@ -514,6 +524,46 @@ app.post('/api/trader/check', async (req, res) => {
   }
 });
 
+// Ejecuta UNA ruta elegida explicitamente, pasando TODOS los guardarrailes
+// (cap de tamaño/diaria/concurrente, profit minimo, red aprobada, direccion de
+// deposito verificada, keys). No hay "bot autónomo live": cada trade es manual.
+app.post('/api/trader/execute', async (req, res) => {
+  try {
+    const b = req.body || {};
+    const opp = {
+      asset: b.asset, pair: b.pair || `${b.asset}/${BASE}`,
+      buySymbol: b.buySymbol, sellSymbol: b.sellSymbol,
+      buyExchange: b.buyExchange, sellExchange: b.sellExchange,
+      buyPrice: Number(b.buyPrice), sellPrice: Number(b.sellPrice),
+      grossSpreadPct: Number(b.grossSpreadPct) || 0
+    };
+    const tradeSize = Number(b.tradeSize) || 1500;
+    if (!opp.asset || !opp.buyExchange || !opp.sellExchange || !opp.buySymbol || !opp.sellSymbol) {
+      return res.json({ ok: false, ref: null, phase: 'blocked', reasons: ['faltan datos de la oportunidad (usar una de la UI)'] });
+    }
+    const snap = buildSnapshot();
+    const data = { books: snap.books, fees: snap.fees, transferFees: snap.transferFees };
+    const result = await trader.execute(opp, tradeSize, data);
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.post('/api/trader/kill', (req, res) => {
+  res.json(trader.kill());
+});
+
+app.get('/api/trader/trades', (req, res) => {
+  res.json({ trades: trader.trades() });
+});
+
+app.post('/api/trader/unwind', (req, res) => {
+  res.json(trader.unwind(req.body?.ref));
+});
+
 app.listen(PORT, () => {
   console.log(`ArbitrageX backend running on port ${PORT}`);
+  // Monitor de depósitos: cierra cada trade apenas llega el depósito (solo en live).
+  setInterval(() => { trader.sweepDeposits().catch(e => console.error('sweep error:', e.message)); }, 30000);
 });

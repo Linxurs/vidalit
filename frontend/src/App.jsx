@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
-import { RefreshCw, Globe, Shapes, Calculator, History } from 'lucide-react';
+import { RefreshCw, Globe, Shapes, Calculator, History, ShieldCheck } from 'lucide-react';
 import Header from './components/Header';
 import KpiCards from './components/KpiCards';
 import SpatialArbitrage from './components/SpatialArbitrage';
 import TriangularArbitrage from './components/TriangularArbitrage';
 import ProfitCalculator from './components/Calculator';
 import PaperBot from './components/PaperBot';
+import LiveStatus from './components/LiveStatus';
 
 function App() {
   const [activeTab, setActiveTab] = useState('spatial');
@@ -127,6 +128,11 @@ const [transferFees, setTransferFees] = useState({});
               className={`px-4 py-2 rounded-lg transition flex items-center gap-2 ${activeTab === 'history' ? 'bg-emerald-500 text-dark-950 font-bold shadow-md shadow-emerald-500/20' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'}`}>
               <History className="w-4 h-4" /> Historial / Paper Bot
             </button>
+            <button 
+              onClick={() => setActiveTab('safety')}
+              className={`px-4 py-2 rounded-lg transition flex items-center gap-2 ${activeTab === 'safety' ? 'bg-emerald-500 text-dark-950 font-bold shadow-md shadow-emerald-500/20' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'}`}>
+              <ShieldCheck className="w-4 h-4" /> Seguridad / Live
+            </button>
           </div>
 
           <div className="flex items-center gap-3 self-end sm:self-auto text-xs">
@@ -171,6 +177,7 @@ const [transferFees, setTransferFees] = useState({});
             withdrawalFees={withdrawalFees}
           />
         )}
+        {activeTab === 'safety' && <LiveStatus />}
 
       </main>
     </div>
