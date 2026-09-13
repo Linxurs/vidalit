@@ -46,20 +46,34 @@ const REAL_FEES = {
   bitget: { maker: 0.001, taker: 0.001 }        // 0.10% / 0.10%
 };
 
-// Real USDT withdrawal fees (USD, representative network), validated 2026.
+// Real USDT withdrawal fees (USD, representative network), verified 2026.
+// These pay the "refill": moving USDT between exchanges to keep buy-side capital funded.
 // Fees are flat and paid in USDT, so USD cost = fee amount.
-// - TRC-20 (Tron) is the cheapest supported network on most exchanges (~$1).
+// - Binance TRC-20: 1.5 USDT, MEXC TRC-20: 0.5 USDT (checked vs official fee pages, Sep 2026).
 // - Coinbase does not support TRC-20: it uses ERC-20 with pass-through gas (variable, ~$6).
 const WITHDRAWAL_FEES = {
-  binance: { usdt: 1.0, network: 'TRC20' },
+  binance: { usdt: 1.5, network: 'TRC20' },
   coinbase: { usdt: 6.0, network: 'ERC20' },
   kraken: { usdt: 2.5, network: 'TRC20' },
   bybit: { usdt: 1.0, network: 'TRC20' },
   okx: { usdt: 1.0, network: 'TRC20' },
-  mexc: { usdt: 1.0, network: 'TRC20' },
+  mexc: { usdt: 0.5, network: 'TRC20' },
   gate: { usdt: 1.0, network: 'TRC20' },
   kucoin: { usdt: 1.0, network: 'TRC20' },
   bitget: { usdt: 1.0, network: 'TRC20' }
+};
+
+// Real ASSET transfer fees, paid IN THE ASSET on its native network, per trade.
+// On Kraken, FET is the native Fetch.ai chain (Cosmos-SDK) — NOT ERC-20 — per Kraken's
+// "Supported address formats" and "Cryptocurrencies available on Kraken" (2026). Native
+// transfers cost fractions of a cent plus a flat exchange fee quoted in FET.
+// Exchanges quote this dynamically per coin/network; values below are conservative
+// defaults used to convert to USD at the live price. feeUsd = feeInAsset * assetPriceUsd.
+const ASSET_TRANSFER_FEES = {
+  FET: {
+    binance: 1.0, coinbase: 1.0, kraken: 1.0, bybit: 1.0, okx: 1.0,
+    mexc: 1.0, gate: 1.0, kucoin: 1.0, bitget: 1.0
+  }
 };
 
 // In-memory caches
@@ -366,7 +380,31 @@ app.get('/api/opportunities', (req, res) => {
       }
     }
 
-    res.json({ opportunities: opps, triangular: triangularOpps, prices: latestPrices, fees: marketFees, withdrawalFees: WITHDRAWAL_FEES, books });
+    // Transfer fee del activo por trade, en USD, a precio live (fee cobrado EN EL ACTIVO).
+    const transferFees = {};
+    for (const [asset, feeByEx] of Object.entries(ASSET_TRANSFER_FEES)) {
+      transferFees[asset] = {};
+      // kraken/coinbase cotizan el par en USD; el resto en USDT
+      const keyFor = (exId) => (exId === 'kraken' || exId === 'coinbase') ? `${asset}/USD` : `${asset}/${BASE}`;
+      let fallbackUsd = null;
+      for (const [exId, feeInAsset] of Object.entries(feeByEx)) {
+        const px = latestPrices[exId]?.[keyFor(exId)]?.bid;
+        const usd = (px != null) ? feeInAsset * toUsdt(px, keyFor(exId)) : null;
+        if (usd == null) fallbackUsd ??= (latestPrices[exId]?.[keyFor(exId)]?.bid);
+        transferFees[asset][exId] = { feeInAsset, feeUsd: usd, priceUsd: usd != null ? usd / feeInAsset : null };
+      }
+      // fallback: precio del activo (ya normalizado a USDT≈USD en latestPrices) desde cualquier exchange
+      if (fallbackUsd != null) {
+        for (const [exId, feeInAsset] of Object.entries(feeByEx)) {
+          if (transferFees[asset][exId].feeUsd == null) {
+            const feePrice = toUsdt(fallbackUsd, '');
+            transferFees[asset][exId] = { feeInAsset, feeUsd: feeInAsset * feePrice, priceUsd: feePrice };
+          }
+        }
+      }
+    }
+
+    res.json({ opportunities: opps, triangular: triangularOpps, prices: latestPrices, fees: marketFees, withdrawalFees: WITHDRAWAL_FEES, transferFees, books });
 });
 
 app.listen(PORT, () => {

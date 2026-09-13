@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Calculator as CalcIcon, Settings2, Wallet, AlertTriangle } from 'lucide-react';
 import { estimateExecution, slippageFromTop } from '../utils/slippage';
 
-export default function ProfitCalculator({ fees, activeOpportunity, withdrawalFees = {}, books = {} }) {
+export default function ProfitCalculator({ fees, activeOpportunity, withdrawalFees = {}, transferFees = {}, sellMode = 'maker', books = {} }) {
   const [tradeSize, setTradeSize] = useState(1000);
   const [gasFee, setGasFee] = useState(0); // 0 = usar fee real del exchange
   
@@ -23,6 +23,7 @@ export default function ProfitCalculator({ fees, activeOpportunity, withdrawalFe
   // Ejecución real: cruzar el order book real (VWAP por profundidad) con taker en ambas patas
   const buyTakerFee = fees[buyExchange]?.[pair]?.taker || 0.001;
   const sellTakerFee = fees[sellExchange]?.[pair]?.taker || 0.001;
+  const sellMakerFee = fees[sellExchange]?.[pair]?.maker || sellTakerFee;
 
   const buyBook = books[buyExchange]?.[buySymbol];
   const sellBook = books[sellExchange]?.[sellSymbol];
@@ -39,12 +40,25 @@ export default function ProfitCalculator({ fees, activeOpportunity, withdrawalFe
   const cryptoAfterBuyFee = amountCrypto * (1 - buyTakerFee);
   
   const sellVolumeUsd = cryptoAfterBuyFee * sellVwap;
-  const sellFeeUsd = sellVolumeUsd * sellTakerFee;
 
-  // Gas on-chain real segun exchange de compra (0 en el input = auto)
-  const actualGas = gasFee > 0 ? gasFee : (withdrawalFees[buyExchange]?.usdt ?? 5.0);
+  // Modo de venta REAL: si el mejor nivel del libro absorbe el lote → post-only
+  // (maker, llenado a P0, fee maker). Si no (o modo taker) → market cruzando el libro.
+  const topBid = sellBook?.bids?.[0]?.[0];
+  const topBidQty = sellBook?.bids?.[0]?.[1] ?? 0;
+  const makerFillable = topBid != null && topBidQty >= amountCrypto * 0.9999;
+  const sellIsMaker = sellMode === 'maker' && makerFillable;
+  const effectiveSellVolume = sellIsMaker ? cryptoAfterBuyFee * topBid : sellVolumeUsd;
+  const effectiveSellFeePct = sellIsMaker ? sellMakerFee : sellTakerFee;
 
-  const netRevenue = sellVolumeUsd - sellFeeUsd - actualGas;
+  const sellFeeUsd = effectiveSellVolume * effectiveSellFeePct;
+
+  // Retiro del ACTIVO (fee cobrado en el activo, a precio live) por trade.
+  // 0 en el input = auto con el fee de transferencia real; si el backend viejo no lo trae, cae al fee USDT.
+  const actualTransfer = transferFees[asset]?.[buyExchange]?.feeUsd;
+  const actualGas = gasFee > 0 ? gasFee : (actualTransfer != null && actualTransfer > 0 ? actualTransfer : (withdrawalFees[buyExchange]?.usdt ?? 0.2));
+  const transferDisplay = (actualTransfer != null && actualTransfer > 0) ? `$${actualTransfer.toFixed(3)}` : `$${(withdrawalFees[buyExchange]?.usdt ?? 0.2).toFixed(2)} (fallback USDT)`;
+
+  const netRevenue = effectiveSellVolume - sellFeeUsd - actualGas;
   const netProfit = netRevenue - tradeSize;
   const netProfitPct = (netProfit / tradeSize) * 100;
 
@@ -56,7 +70,7 @@ export default function ProfitCalculator({ fees, activeOpportunity, withdrawalFe
         </div>
         <div>
           <h2 className="text-lg font-bold text-white">Calculadora de Ejecución Real</h2>
-          <p className="text-xs text-slate-400">Simulación rigurosa con comisiones Taker reales (publicadas y verificadas) de cada exchange.</p>
+          <p className="text-xs text-slate-400">Simulación rigurosa con comisiones reales (publicadas y verificadas) de cada exchange: entrada Taker; salida Maker (post-only al mejor bid) si el top del libro absorbe el lote, si no Taker.</p>
         </div>
       </div>
 
@@ -92,20 +106,20 @@ export default function ProfitCalculator({ fees, activeOpportunity, withdrawalFe
               </div>
 
               <div>
-                <label className="block text-slate-400 mb-1.5 text-xs">Costo de Red Estimado (Retiro on-chain USDT)</label>
+                <label className="block text-slate-400 mb-1.5 text-xs">Retiro del Activo / transferencia (USDT)</label>
                 <div className="relative">
                   <span className="absolute left-3 top-2.5 text-slate-500">$</span>
                   <input 
                     type="number" 
                     step="0.1"
                     value={gasFee}
-                    placeholder={withdrawalFees[buyExchange] ? `Auto: $${withdrawalFees[buyExchange].usdt.toFixed(2)} (${withdrawalFees[buyExchange].network})` : 'Auto: $5.00'}
+                    placeholder={`Auto: ${transferDisplay}`}
                     onChange={e => setGasFee(Number(e.target.value))}
                     className="w-full bg-dark-900 border border-slate-700 rounded-lg pl-7 pr-3 py-2 text-white font-mono focus:border-emerald-500 focus:outline-none"
                   />
                 </div>
                 <p className="text-[10px] text-slate-500 mt-1">
-                  Fee real de retiro de {buyExchange}: ${withdrawalFees[buyExchange]?.usdt?.toFixed(2) ?? '5.00'} ({withdrawalFees[buyExchange]?.network ?? 'ERC20'}). Dejá 0 para usar el valor real.
+                  Fee de retiro del <strong>{asset}</strong> en {buyExchange} (auto: {transferDisplay}), cobrado en el activo sobre su red nativa (en Kraken: Fetch.ai nativa). No es retiro de USDT: ese fee solo aplica al refill de capital.
                 </p>
               </div>
             </div>
@@ -181,9 +195,15 @@ export default function ProfitCalculator({ fees, activeOpportunity, withdrawalFe
                   <span className="text-white">${sellVolumeUsd.toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between pt-2 border-t border-slate-800">
-                  <span className="text-slate-500">Fee Taker ({(sellTakerFee * 100).toFixed(2)}%):</span>
+                  <span className="text-slate-500">Fee {sellIsMaker ? 'Maker' : 'Taker'} ({(effectiveSellFeePct * 100).toFixed(2)}%):</span>
                   <span className="text-rose-400">-${sellFeeUsd.toFixed(2)}</span>
                 </div>
+                {sellMode === 'maker' && !makerFillable && (
+                  <div className="flex justify-between text-[10px] text-amber-400/80">
+                    <span className="text-slate-500">Mejor bid no absorbe el lote → cae a taker</span>
+                    <span>↳ mix</span>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -202,14 +222,14 @@ export default function ProfitCalculator({ fees, activeOpportunity, withdrawalFe
                <div className="flex-1 space-y-2 text-sm font-mono w-full">
 <div className="flex justify-between">
                     <span className="text-slate-500">Total Venta (VWAP, post-compra):</span>
-                    <span className="text-emerald-400">+${(sellVolumeUsd - tradeSize).toFixed(2)}</span>
+                    <span className="text-emerald-400">+${(effectiveSellVolume - tradeSize).toFixed(2)}</span>
                   </div>
                   <div className="flex justify-between text-rose-400/80">
-                    <span>Fee Taker Venta:</span>
+                    <span>Fee {sellIsMaker ? 'Maker' : 'Taker'} Venta:</span>
                     <span>-${sellFeeUsd.toFixed(2)}</span>
                   </div>
                  <div className="flex justify-between text-rose-400/80 pb-2 border-b border-slate-800">
-                   <span>Costo Retiro (Gas):</span>
+                   <span>Retiro del Activo ({asset}):</span>
                    <span>-${actualGas.toFixed(2)}</span>
                  </div>
                  <div className="flex justify-between pt-2 text-base font-bold">

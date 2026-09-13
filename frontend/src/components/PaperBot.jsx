@@ -12,7 +12,10 @@ export default function PaperBot({
   setBotDelayMin,
   botSurvivalPct,
   setBotSurvivalPct,
+  sellMode = 'maker',
+  setSellMode,
   survivalStats = { checked: 0, survived: 0 },
+  pendingTrades = [],
   onReset,
   withdrawalFees
 }) {
@@ -38,7 +41,7 @@ export default function PaperBot({
               />
             </div>
             <div>
-              <label className="block text-slate-400 mb-1.5 text-xs">Costo de Retiro On-Chain (Gas en USDT)</label>
+              <label className="block text-slate-400 mb-1.5 text-xs">Costo de Retiro del Activo (USDT, por trade)</label>
               <input 
                 type="number" 
                 step="0.10"
@@ -48,7 +51,7 @@ export default function PaperBot({
                 className="w-full bg-dark-950 border border-slate-800 rounded-lg px-3 py-2 text-white font-mono focus:border-emerald-500 focus:outline-none"
               />
               <p className="text-[10px] text-slate-500 mt-1">
-                Dejá 0 para usar el <strong>fee real de retiro</strong> del exchange de compra ({tradeHistory.length > 0 ? 'ver historial' : Object.entries(withdrawalFees).map(([ex, f]) => `${ex}:$${f.usdt.toFixed(2)}`).join(' · ')}). El bot evalúa el mercado en tiempo real. Solo enviará órdenes si el <strong>Beneficio Neto</strong> supera el $0.00 más el <strong>colchón de supervivencia</strong> después de descontar las comisiones Taker reales de ambos exchanges (órdenes de mercado que cruzan el libro), el slippage por profundidad real y este costo de Gas.
+                Dejá 0 para usar el <strong>fee real de retiro del ACTIVO</strong> (FET a precio live, ~$0.17 hoy). Se cobra <em>en el activo</em> y se transfiere por la <strong>red nativa Fetch.ai</strong>, no USDT. El fee de retiro USDT (${Object.entries(withdrawalFees).map(([ex, f]) => `${ex}: $${f.usdt.toFixed(2)}`).join(' · ')} de refill) solo paga al <em>reponer capital</em> entre exchanges, no por trade. El bot evalúa el mercado en tiempo real y solo envía órdenes si el <strong>Beneficio Neto</strong> supera el colchón tras descontar comisiones reales (entrada <strong>Taker</strong> cruzando el libro; salida <strong>Maker</strong> post-only al mejor bid si el top lo absorbe, si no Taker), slippage por profundidad real y este costo.
               </p>
             </div>
             <div>
@@ -64,7 +67,20 @@ export default function PaperBot({
                 />
               </div>
               <p className="text-[10px] text-slate-500 mt-1">
-                Tiempo que el bot asume tarda el retiro on-chain entre exchanges. Cada señal ejecutada se re-verifica tras este lapso para medir si el spread <strong>sobrevivió</strong>.
+                El bloqueo de la red nativa es rápido, pero lo que domina es el <strong>crédito del depósito en el exchange de venta</strong> (5–10'+ por confirmaciones; más lento la primera vez o con revisión manual). 10 min es el valor medio conservador. Cada operación se <strong>vende tras este lapso contra el libro real</strong>, midiendo si el spread sobrevivió.
+              </p>
+            </div>
+            <div>
+              <label className="block text-slate-400 mb-1.5 text-xs">Modo de Venta (salida)</label>
+              <select 
+                value={sellMode}
+                onChange={e => setSellMode(e.target.value)}
+                className="w-full bg-dark-950 border border-slate-800 rounded-lg px-3 py-2 text-white font-mono focus:border-emerald-500 focus:outline-none">
+                <option value="maker">Maker (post-only al mejor bid)</option>
+                <option value="taker">Taker (market)</option>
+              </select>
+              <p className="text-[10px] text-slate-500 mt-1">
+                <strong>Maker</strong>: si el mejor nivel del libro absorbe el lote, se postea sin cruzar y se paga fee maker (Kraken 0.40%); si no, cae a taker (0.80%). <strong>Taker</strong>: siempre cruza el libro al precio de mercado. El resto no llenado se vende al mejor bid (sin castigos inventados).
               </p>
             </div>
             <div>
@@ -119,6 +135,28 @@ export default function PaperBot({
             </button>
           </div>
 
+          {/* Retiros en curso: compra hecha, venta pendiente hasta que el retiro llega */}
+          {pendingTrades.length > 0 && (
+            <div className="mb-4 border border-cyan-500/20 bg-cyan-500/5 rounded-xl p-3">
+              <p className="text-[10px] uppercase tracking-wider text-cyan-300 font-bold mb-2">
+                Retiros en curso (compra hecha, vendiendo tras {botDelayMin} min)
+              </p>
+              <div className="space-y-1.5">
+                {pendingTrades.map(pt => {
+                  const elapsed = Math.round((Date.now() - pt.boughtAt) / 1000);
+                  const total = botDelayMin * 60;
+                  return (
+                    <div key={pt.id} className="flex items-center justify-between text-xs font-mono text-slate-300">
+                      <span>{pt.pair} {pt.route}</span>
+                      <span className="text-slate-500">${pt.size.toLocaleString()}</span>
+                      <span className="text-cyan-300">{elapsed >= total ? 'Vendiendo…' : `${total - elapsed}s restantes`}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           <div className="flex-1 overflow-x-auto scrollbar-thin border border-slate-800/60 rounded-xl bg-dark-950/50 min-h-[300px]">
             <table className="w-full text-left text-xs border-collapse">
               <thead>
@@ -128,14 +166,15 @@ export default function PaperBot({
                   <th className="py-2.5 px-3">Ruta</th>
                   <th className="py-2.5 px-3 text-right">Monto</th>
                   <th className="py-2.5 px-3 text-right">Ejec. Compra→Venta</th>
+                  <th className="py-2.5 px-3 text-right">Llenado Venta</th>
                   <th className="py-2.5 px-3 text-right">Beneficio</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/40 font-mono">
                 {tradeHistory.length === 0 ? (
                   <tr>
-                    <td colSpan="6" className="text-center py-10 text-slate-500 italic">
-                      No hay operaciones registradas. {botActive ? 'Esperando oportunidad...' : 'Iniciá el bot para comenzar.'}
+                    <td colSpan="7" className="text-center py-10 text-slate-500 italic">
+                      No hay operaciones cerradas. {botActive ? 'Esperando oportunidad…' : 'Iniciá el bot para comenzar.'}
                     </td>
                   </tr>
                 ) : (
@@ -143,10 +182,13 @@ export default function PaperBot({
                     <tr key={trade.id} className="hover:bg-slate-800/30 transition">
                       <td className="py-2 px-3 text-slate-400">{trade.time}</td>
                       <td className="py-2 px-3 font-bold text-white">{trade.pair}</td>
-                      <td className="py-2 px-3 text-[10px] text-slate-300">{trade.route}</td>
+                      <td className="py-2 px-3 text-[10px] text-slate-300">{trade.route}{trade.mode ? <span className="text-slate-500"> · {trade.mode.toUpperCase()}</span> : ''}</td>
                       <td className="py-2 px-3 text-right">${trade.amount.toLocaleString()}</td>
                       <td className="py-2 px-3 text-right text-slate-300">
                         {trade.execBuy ? `$${trade.execBuy.toLocaleString(undefined, {maximumFractionDigits:6})} → $${trade.execSell.toLocaleString(undefined, {maximumFractionDigits:6})}` : '-'}
+                      </td>
+                      <td className={`py-2 px-3 text-right ${trade.soldPct >= 100 ? 'text-emerald-400' : 'text-amber-400'}`}>
+                        {trade.soldPct ?? 100}%
                       </td>
                       <td className={`py-2 px-3 text-right font-bold ${trade.profit > 0 ? 'text-emerald-400' : 'text-rose-500'}`}>
                         {trade.profit > 0 ? '+$' : '-$'}{Math.abs(trade.profit).toFixed(2)}

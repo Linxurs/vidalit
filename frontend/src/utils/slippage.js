@@ -43,6 +43,17 @@ export function estimateSell(bids, qty) {
   };
 }
 
+// Orden post-only (maker) al MEJOR BID: sólo es factible si el mejor nivel del libro
+// (profundidad resting a P0) absorbe el lote completo. Se llena a P0 con fee maker;
+// nada de esto cruza el libro. Si el top no cubre, no hay cierre maker garantizado.
+export function estimateMakerSell(bids, qty) {
+  const top = bids?.[0];
+  if (!top) return { fillable: false, price: null, proceeds: 0, reason: 'no-book' };
+  const [price, depth] = top;
+  if (depth < qty * 0.9999) return { fillable: false, price, proceeds: 0, reason: 'depth' };
+  return { fillable: true, price, proceeds: qty * price, reason: null };
+}
+
 // Ejecución completa de una operación: comprar USDT, vender el activo.
 export function estimateExecution({ asks, bids }, sizeUsd) {
   if (!asks || !bids) return null;
