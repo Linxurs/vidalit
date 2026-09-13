@@ -24,6 +24,8 @@ const [transferFees, setTransferFees] = useState({});
   const [bot, setBot] = useState({ active: false, balance: 10000, tradeSize: 1500, gasCost: 0, delayMin: 3, survivalPct: 0.3, sellMode: 'maker', history: [], stats: { checked: 0, survived: 0 } });
 
   const API = 'http://localhost:3001';
+  const API_KEY = import.meta.env.VITE_API_KEY || '';
+  const authHeaders = API_KEY ? { 'x-api-key': API_KEY } : {};
 
   const syncBot = async () => {
     try {
@@ -33,7 +35,7 @@ const [transferFees, setTransferFees] = useState({});
   };
 
   const botControl = async (action) => {
-    try { await fetch(`${API}/api/paper-bot/${action}`, { method: 'POST' }); } catch (err) {}
+    try { await fetch(`${API}/api/paper-bot/${action}`, { method: 'POST', headers: authHeaders }); } catch (err) {}
     syncBot();
   };
 
@@ -41,7 +43,7 @@ const [transferFees, setTransferFees] = useState({});
     try {
       await fetch(`${API}/api/paper-bot/config`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
         body: JSON.stringify(patch)
       });
     } catch (err) {}

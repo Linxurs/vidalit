@@ -16,7 +16,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-dotenv.config();
+dotenv.config({ quiet: true });
 
 const EXCHANGE_IDS = ['binance', 'coinbase', 'kraken', 'bybit', 'okx', 'mexc', 'gate', 'kucoin', 'bitget'];
 

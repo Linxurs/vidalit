@@ -4,14 +4,31 @@ const ccxt = require('ccxt');
 const dotenv = require('dotenv');
 const paperbot = require('./paperbot');
 const trader = require('./trader');
+const { makeRequireAuth } = require('./auth');
 
-dotenv.config();
+dotenv.config({ quiet: true });
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
 const PORT = process.env.PORT || 3001;
+const HOST = process.env.HOST || '127.0.0.1';
+const API_KEY = process.env.ARBITRAGEX_API_KEY || null;
+// Origenes permitidos para el navegador (CORS). Separados por coma.
+const CORS_ORIGINS = (process.env.CORS_ORIGIN || 'http://localhost:5173,http://127.0.0.1:5173')
+  .split(',').map(s => s.trim()).filter(Boolean);
+
+// Autenticacion por header x-api-key. Si no se define ARBITRAGEX_API_KEY,
+// el servidor arranca sin clave (modo dev); con clave, TODA mutacion exige
+// el header correcto o responde 401.
+const requireAuth = makeRequireAuth(API_KEY);
+
+app.use(cors({ origin: (origin, cb) => {
+  // Sin Origin (curl, pruebas locales) se permite; con Origin hay que estar listado.
+  if (!origin || CORS_ORIGINS.includes(origin)) return cb(null, true);
+  return cb(null, false);
+}, methods: ['GET', 'POST', 'OPTIONS'], allowedHeaders: ['Content-Type', 'x-api-key'] }));
 
 // Initialize CCXT exchanges
 const exchanges = {
@@ -475,22 +492,22 @@ app.get('/api/paper-bot', (req, res) => {
     res.json(paperbot.snapshot());
 });
 
-app.post('/api/paper-bot/start', (req, res) => {
+app.post('/api/paper-bot/start', requireAuth, (req, res) => {
     paperbot.start();
     res.json(paperbot.snapshot());
 });
 
-app.post('/api/paper-bot/stop', (req, res) => {
+app.post('/api/paper-bot/stop', requireAuth, (req, res) => {
     paperbot.stop();
     res.json(paperbot.snapshot());
 });
 
-app.post('/api/paper-bot/reset', (req, res) => {
+app.post('/api/paper-bot/reset', requireAuth, (req, res) => {
     paperbot.reset();
     res.json(paperbot.snapshot());
 });
 
-app.post('/api/paper-bot/config', (req, res) => {
+app.post('/api/paper-bot/config', requireAuth, (req, res) => {
     paperbot.config(req.body);
     res.json(paperbot.snapshot());
 });
@@ -501,7 +518,7 @@ app.get('/api/trader/status', (req, res) => {
 });
 
 // Verifica las keys configuradas (solo lectura de balance) y las cachea.
-app.post('/api/trader/probe', async (req, res) => {
+app.post('/api/trader/probe', requireAuth, async (req, res) => {
     try {
         const ids = EXCHANGES.filter(id => trader.authFor(id));
         const results = {};
@@ -510,7 +527,7 @@ app.post('/api/trader/probe', async (req, res) => {
     } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
-app.post('/api/trader/check', async (req, res) => {
+app.post('/api/trader/check', requireAuth, async (req, res) => {
   try {
     const tradeSize = Number(req.body?.tradeSize) || 1500;
     const snap = buildSnapshot();
@@ -527,7 +544,7 @@ app.post('/api/trader/check', async (req, res) => {
 // Ejecuta UNA ruta elegida explicitamente, pasando TODOS los guardarrailes
 // (cap de tamaño/diaria/concurrente, profit minimo, red aprobada, direccion de
 // deposito verificada, keys). No hay "bot autónomo live": cada trade es manual.
-app.post('/api/trader/execute', async (req, res) => {
+app.post('/api/trader/execute', requireAuth, async (req, res) => {
   try {
     const b = req.body || {};
     const opp = {
@@ -550,7 +567,7 @@ app.post('/api/trader/execute', async (req, res) => {
   }
 });
 
-app.post('/api/trader/kill', (req, res) => {
+app.post('/api/trader/kill', requireAuth, (req, res) => {
   res.json(trader.kill());
 });
 
@@ -558,11 +575,11 @@ app.get('/api/trader/trades', (req, res) => {
   res.json({ trades: trader.trades() });
 });
 
-app.post('/api/trader/unwind', (req, res) => {
+app.post('/api/trader/unwind', requireAuth, (req, res) => {
   res.json(trader.unwind(req.body?.ref));
 });
 
-app.listen(PORT, () => {
+app.listen(PORT, HOST, () => {
   console.log(`ArbitrageX backend running on port ${PORT}`);
   // Monitor de depósitos: cierra cada trade apenas llega el depósito (solo en live).
   setInterval(() => { trader.sweepDeposits().catch(e => console.error('sweep error:', e.message)); }, 30000);

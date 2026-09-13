@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { ShieldAlert, ShieldCheck, AlertTriangle, Power, RefreshCw, ListChecks } from 'lucide-react';
 
 const API = 'http://localhost:3001';
+const API_KEY = import.meta.env.VITE_API_KEY || '';
+const authHeaders = API_KEY ? { 'x-api-key': API_KEY } : {};
 
 const STATUS_COLOR = { pending: 'text-cyan-300', in_transit: 'text-amber-300', deposited: 'text-amber-300', done: 'text-emerald-400', failed: 'text-rose-500', stuck: 'text-rose-500', killed: 'text-rose-400' };
 
@@ -23,13 +25,13 @@ export default function LiveStatus() {
 
   const kill = async () => {
     if (!window.confirm('¿Kill switch? Detiene toda ejecución y los trades en vuelo quedan para manejo manual. Solo se desactiva reiniciando el backend.')) return;
-    try { await fetch(`${API}/api/trader/kill`, { method: 'POST' }); } catch (e) {}
+    try { await fetch(`${API}/api/trader/kill`, { method: 'POST', headers: authHeaders }); } catch (e) {}
     load();
   };
 
   const unwind = async (ref) => {
     try {
-      const r = await fetch(`${API}/api/trader/unwind`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ref }) });
+      const r = await fetch(`${API}/api/trader/unwind`, { method: 'POST', headers: { ...authHeaders, 'Content-Type': 'application/json' }, body: JSON.stringify({ ref }) });
       if (r.ok) setUnwound(await r.json());
     } catch (e) {}
   };
