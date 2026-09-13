@@ -9,7 +9,6 @@ const { makeRequireAuth } = require('./auth');
 dotenv.config({ quiet: true });
 
 const app = express();
-app.use(cors());
 app.use(express.json());
 
 const PORT = process.env.PORT || 3001;
@@ -513,7 +512,7 @@ app.post('/api/paper-bot/config', requireAuth, (req, res) => {
 });
 
 // ---- Capa de ejecución real segura (Fases 0-2) ----
-app.get('/api/trader/status', (req, res) => {
+app.get('/api/trader/status', requireAuth, (req, res) => {
     res.json(trader.status());
 });
 
@@ -571,7 +570,7 @@ app.post('/api/trader/kill', requireAuth, (req, res) => {
   res.json(trader.kill());
 });
 
-app.get('/api/trader/trades', (req, res) => {
+app.get('/api/trader/trades', requireAuth, (req, res) => {
   res.json({ trades: trader.trades() });
 });
 

@@ -14,9 +14,9 @@ export default function LiveStatus() {
 
   const load = async () => {
     try {
-      const r = await fetch(`${API}/api/trader/status`);
+      const r = await fetch(`${API}/api/trader/status`, { headers: authHeaders });
       if (r.ok) setSt(await r.json());
-      const t = await fetch(`${API}/api/trader/trades`);
+      const t = await fetch(`${API}/api/trader/trades`, { headers: authHeaders });
       if (t.ok) setTrades((await t.json()).trades || []);
     } catch (e) { /* backend apagado */ }
   };
