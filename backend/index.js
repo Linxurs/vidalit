@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const ccxt = require('ccxt');
 const dotenv = require('dotenv');
+const paperbot = require('./paperbot');
 
 dotenv.config();
 
@@ -271,10 +272,14 @@ initMarkets().then(() => {
     setTimeout(loopBooks, 10000);
   };
   loopBooks();
+  // Paper bot tick: corre en el servidor, independiente del navegador.
+  setInterval(() => {
+    try { paperbot.tick(buildSnapshot()); } catch (e) { console.error('paperbot tick error:', e.message); }
+  }, 15000);
 });
 
-// API Endpoint to get current opportunities
-app.get('/api/opportunities', (req, res) => {
+// Compute the full API snapshot (opportunities + triangular + books + fees)
+function buildSnapshot() {
    const opps = [];
    const triangularOpps = [];
    const exchangeKeys = Object.keys(exchanges);
@@ -380,7 +385,7 @@ app.get('/api/opportunities', (req, res) => {
       }
     }
 
-    // Transfer fee del activo por trade, en USD, a precio live (fee cobrado EN EL ACTIVO).
+// Transfer fee del activo por trade, en USD, a precio live (fee cobrado EN EL ACTIVO).
     const transferFees = {};
     for (const [asset, feeByEx] of Object.entries(ASSET_TRANSFER_FEES)) {
       transferFees[asset] = {};
@@ -404,7 +409,37 @@ app.get('/api/opportunities', (req, res) => {
       }
     }
 
-    res.json({ opportunities: opps, triangular: triangularOpps, prices: latestPrices, fees: marketFees, withdrawalFees: WITHDRAWAL_FEES, transferFees, books });
+    return { opportunities: opps, triangular: triangularOpps, prices: latestPrices, fees: marketFees, withdrawalFees: WITHDRAWAL_FEES, transferFees, books };
+}
+
+// API Endpoint to get current opportunities
+app.get('/api/opportunities', (req, res) => {
+    res.json(buildSnapshot());
+});
+
+// Paper bot control endpoints (motor en backend, independiente del navegador)
+app.get('/api/paper-bot', (req, res) => {
+    res.json(paperbot.snapshot());
+});
+
+app.post('/api/paper-bot/start', (req, res) => {
+    paperbot.start();
+    res.json(paperbot.snapshot());
+});
+
+app.post('/api/paper-bot/stop', (req, res) => {
+    paperbot.stop();
+    res.json(paperbot.snapshot());
+});
+
+app.post('/api/paper-bot/reset', (req, res) => {
+    paperbot.reset();
+    res.json(paperbot.snapshot());
+});
+
+app.post('/api/paper-bot/config', (req, res) => {
+    paperbot.config(req.body);
+    res.json(paperbot.snapshot());
 });
 
 app.listen(PORT, () => {

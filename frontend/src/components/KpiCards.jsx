@@ -1,6 +1,14 @@
 import { Zap, Radar, LineChart, Bot } from 'lucide-react';
 
-export default function KpiCards({ opportunities, demoBalance, botActive, setBotActive }) {
+function lastActivity(botLastTick) {
+  if (!botLastTick) return 'motor del bot: sin datos';
+  const s = Math.max(0, Math.floor((Date.now() - botLastTick) / 1000));
+  if (s < 60) return `motor del bot vivo · tick hace ${s}s`;
+  if (s < 3600) return `motor del bot vivo · tick hace ${Math.floor(s / 60)}m`;
+  return `motor del bot: último tick hace ${Math.floor(s / 3600)}h`;
+}
+
+export default function KpiCards({ opportunities, demoBalance, botActive, setBotActive, botLastTick }) {
   const bestOpp = opportunities.length > 0 ? opportunities[0] : null;
 
   return (
@@ -75,6 +83,9 @@ export default function KpiCards({ opportunities, demoBalance, botActive, setBot
             {botActive ? 'Detener' : 'Iniciar'}
           </button>
         </div>
+        <p className={`text-[11px] mt-2 font-mono ${botActive ? 'text-emerald-400/90' : 'text-slate-500'}`}>
+          {lastActivity(botLastTick)}
+        </p>
       </div>
     </section>
   );
